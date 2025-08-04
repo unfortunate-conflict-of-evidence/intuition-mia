@@ -29,6 +29,28 @@ import shutil
 # parser.print_help()
 # opt = parser.parse_args()
 
+def check_gpu():
+    '''
+    Configures TensorFlow to use GPUs with dynamic memory allocation.
+
+    This enables memory growth on all detected GPUs, preventing the
+    framework from pre-allocating all VRAM. This is ideal for running 
+    multiple processes concurrently.
+
+    If no GPU is found, default to using the CPU.
+    '''
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        print(f"GPUs available: {gpus}")
+        try:
+            # Enable memory growth to avoid allocating all GPU memory at once
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+        except RuntimeError as e:
+            print(f"Error setting GPU memory growth: {e}")
+    else:
+        print("No GPU found. Running on CPU.")
+
 def imshow(img):
     '''
     View single image.
@@ -495,6 +517,9 @@ def main():
         folder_name = f"{month_number}-{day_number}-cnn-cifar10-diff-class-train-ratio-{train_ratio_string[i]}"
         raw_experiment('cifar10', train_ratio, percent=5, model_type='cnn', num_trials=100, same_class=False, folder_name=folder_name)
         zip_folder(folder_name, folder_name)
+
+def main():
+    check_gpu()
 
 if __name__ == '__main__':
     main()
