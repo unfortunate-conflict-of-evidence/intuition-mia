@@ -16,13 +16,13 @@ labelsCIFAR10 = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog',
 
 def readCIFAR10(data_path, normalize=True, train_ratio=0.8, random_state=None):
 	'''
-	Reads and formats downloaded CIFAR10 data from a specified filepath.
+	Reads and formats downloaded CIFAR-10 data from a specified filepath.
 	Returns image data in (num_images, height, width, channels) format.
 	Also returns lists of unique IDs for train and test images.
 	Allows for custom train:test split.
 	
 	Args:
-	    data_path: path to the CIFAR10 data folder
+	    data_path: path to the CIFAR-10 data folder
 		normalize: If True, returns float data in [0, 1] range.
                    If False, returns uint8 data in [0, 255] range.
 		train_ratio: ratio of training to test images [0, 1]
@@ -72,7 +72,7 @@ def readCIFAR10(data_path, normalize=True, train_ratio=0.8, random_state=None):
 
 def loadCIFAR10(normalize=True, train_ratio=0.8, random_state=None):
 	'''
-	Formats CIFAR10 data loaded from keras. Slower than readCIFAR10.
+	Formats CIFAR-10 data loaded from keras. Slower than readCIFAR10.
 	Returns image data in (num_images, height, width, channels) format.
 	Also returns lists of unique IDs for train and test images.
 	Allows for custom train:test split.
@@ -105,6 +105,32 @@ def loadCIFAR10(normalize=True, train_ratio=0.8, random_state=None):
         X_combined, y_combined, image_ids, train_size=train_ratio, random_state=random_state, stratify=y_combined
 	)
 	return x_train, y_train, ids_train, x_test, y_test, ids_test
+
+def loadFullCIFAR10(normalize=True):
+    '''
+    Loads the full CIFAR-10 dataset without splitting it into train/test.
+    Returns the concatenated images, labels, and unique IDs.
+	Image data is in (num_images, height, width, channels) format.
+	
+	Args:
+		normalize: If True, returns float data in [0, 1] range.
+		
+	Returns:
+        tuple: (images, labels, ids)
+    '''
+    cifar10 = keras.datasets.cifar10
+    (x_train, y_train), (x_test, y_test) = cifar10.load_data()
+    
+    full_x = np.concatenate((x_train, x_test), axis=0)
+    full_y = np.concatenate((y_train, y_test), axis=0).flatten()
+    
+    num_samples = len(full_y)
+    full_ids = np.arange(num_samples)
+	
+    if normalize:
+        full_x = full_x / 255.0
+		
+    return full_x, full_y, full_ids
 
 def standardCIFAR(train_images: np.ndarray, test_images: np.ndarray):
     '''
@@ -146,7 +172,7 @@ def standardCIFAR(train_images: np.ndarray, test_images: np.ndarray):
 
 def getLabelCIFAR10(index):
 	'''
-	Returns the string name for a given CIFAR10 label.
+	Returns the string name for a given CIFAR-10 label.
       
     Args:
         index (int): The integer label.
