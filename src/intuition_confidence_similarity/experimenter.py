@@ -391,20 +391,25 @@ def raw_experiment(dataset, train_ratio=0.5, percent=5, model_type='cnn', num_tr
         # Train model
         model = classifier.train_model(train_x, train_y, test_x, test_y, model_type=model_type)
 
-        # Query model for confidences on the test set
-        confidences = np.max(model.predict(test_x, batch_size=100), axis=1)
+        # Combine train and test sets to process the full dataset
+        full_x = np.concatenate((train_x, test_x), axis=0)
+        full_y = np.concatenate((train_y, test_y), axis=0)
+        full_ids = np.concatenate((train_ids, test_ids), axis=0)
+
+        # Query model for confidences on the full dataset
+        confidences = np.max(model.predict(full_x, batch_size=100), axis=1)
 
         # Get nearest training point distances
         if dataset == 'cifar10' or dataset == 'cifar100':
             # Get image features before the softmax layer
             features_model = classifier.get_cnn_features(model, train_x.shape[1:])
             train_features = get_image_features(features_model, train_x)
-            test_features = get_image_features(features_model, test_x)
+            full_features = get_image_features(features_model, full_x)
 
-            distances = nearest_train_batch(test_features, test_y, train_features, train_y, 'angular_distance', same_class)
+            distances = nearest_train_batch(full_features, full_y, train_features, train_y, 'angular_distance', same_class)
 
         # Get top/bottom percent confidence, distance, and id subsets
-        bottom_conf, top_conf, bottom_train_dist, top_train_dist, bottom_ids, top_ids = top_bottom_percent_conf_subsets(confidences, distances, test_ids, percent)
+        bottom_conf, top_conf, bottom_train_dist, top_train_dist, bottom_ids, top_ids = top_bottom_percent_conf_subsets(confidences, distances, full_ids, percent)
 
         #Save trial data
         all_trials_bottom_conf.extend(bottom_conf)
