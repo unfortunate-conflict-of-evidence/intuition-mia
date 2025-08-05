@@ -11,7 +11,7 @@ import os
 import math
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-import argparse
+from sklearn.model_selection import train_test_split
 import classifier
 import dataloader
 import pandas as pd
@@ -19,15 +19,11 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from datetime import date
 import shutil
+from multiprocessing import Pool, cpu_count
+import warnings
 
-# parser = argparse.ArgumentParser()
-# parser.add_argument('--dataset', default='CIFAR10', help='Which dataset to use (CIFAR10 or News)')
-# parser.add_argument('--classifierType', default='cnn', help='Which classifier cnn or nn')
-# parser.add_argument('--dataFolderPath', default='./data/', help='Path to store data')
-# parser.add_argument('--pathToLoadData', default='./data/cifar-10-batches-py-official', help='Path to load dataset from')
-# parser.add_argument('--num_epoch', type=int, default=50, help='Number of epochs to train target model')
-# parser.print_help()
-# opt = parser.parse_args()
+# Suppress common warnings that can be noisy
+warnings.filterwarnings('ignore', category=UserWarning)
 
 def check_gpu():
     '''
@@ -365,8 +361,8 @@ def raw_experiment(dataset, train_ratio=0.5, percent=5, model_type='cnn', num_tr
     nearest training point distances for top and bottom confidence predictions.
 
     For each trial, the function trains a specified model on a dataset, queries the
-    model for prediction confidences on the test set, and calculates the distances
-    to the nearest training point for each test sample. It then identifies the
+    model for prediction confidences on the dataset, and calculates the distances
+    to the nearest training point for each query sample. It then identifies the
     top and bottom percent of samples based on prediction confidence and saves
     the relevant data (IDs, training distances, confidences, and trial number)
     for these subsets.
@@ -461,6 +457,148 @@ def raw_experiment(dataset, train_ratio=0.5, percent=5, model_type='cnn', num_tr
     df_bottom.to_csv(os.path.join(folder_name, "bottom_percent.csv"), index=False)
     df_top.to_csv(os.path.join(folder_name, "top_percent.csv"), index=False)
 
+def run_single_trial(trial, dataset, train_ratio, percent, model_type, same_class, full_x, full_y, full_ids):
+    '''
+    A worker function to run a single experiment trial. This function
+    is designed to be used with multiprocessing.Pool.
+    
+    Returns:
+        dict: A dictionary containing the aggregated data for the single trial.
+    '''
+    print(f"Starting trial {trial}...")
+
+    # Perform a randomized train/test split inside the worker function
+    train_x, test_x, train_y, test_y, train_ids, test_ids = train_test_split(
+        full_x, full_y, full_ids, train_size=train_ratio, random_state=trial, stratify=full_y
+    )
+
+    # Preprocess the data after splitting
+    if dataset == 'cifar10':
+        train_x, test_x = dataloader.standardCIFAR(train_x, test_x)
+    
+    # Train model
+    model = classifier.train_model(train_x, train_y, test_x, test_y, model_type=model_type)
+
+    # Combine train and test sets to process the full dataset
+    full_x = np.concatenate((train_x, test_x), axis=0)
+    full_y = np.concatenate((train_y, test_y), axis=0)
+    full_ids = np.concatenate((train_ids, test_ids), axis=0)
+
+    # Query model for confidences on the full dataset
+    confidences = np.max(model.predict(full_x, batch_size=100), axis=1)
+
+    # Get nearest training point distances
+    if dataset == 'cifar10' or dataset == 'cifar100':
+        # Get image features before the softmax layer
+        features_model = classifier.get_cnn_features(model, train_x.shape[1:])
+        train_features = get_image_features(features_model, train_x)
+        full_features = get_image_features(features_model, full_x)
+
+        distances = nearest_train_batch(full_features, full_y, train_features, train_y, 'angular_distance', same_class)
+
+    # Get top/bottom percent confidence, distance, and id subsets
+    bottom_conf, top_conf, bottom_train_dist, top_train_dist, bottom_ids, top_ids = top_bottom_percent_conf_subsets(confidences, distances, full_ids, percent)
+
+    print(f"Trial {trial} completed.")
+    
+    # Return a dictionary with all the collected data
+    return {
+        "bottom_conf": bottom_conf,
+        "top_conf": top_conf,
+        "bottom_train_dist": bottom_train_dist,
+        "top_train_dist": top_train_dist,
+        "bottom_ids": bottom_ids,
+        "top_ids": top_ids,
+        "trial_num": np.full(bottom_conf.shape, trial)
+    }
+
+def raw_experiment_parallel(dataset, train_ratio=0.5, percent=5, model_type='cnn', num_trials=100, same_class=False, folder_name='experiment_data'):
+    '''
+    Conducts a series of machine learning experiments in parallel using multiprocessing
+    to analyze model confidence and nearest training point distances for top and bottom 
+    confidence predictions.
+
+    The results from all trials are aggregated and saved into two CSV files:
+    'bottom_percent.csv' and 'top_percent.csv', located in the specified
+    'folder_name'.
+
+    Args:
+        dataset (str): The name of the dataset to use (e.g., 'cifar10').
+        train_ratio (float, optional): The proportion of the dataset to use for
+            training. Defaults to 0.5.
+        percent (int, optional): The percentage of top and bottom confident
+            predictions to save. For example, if percent=5, the top 5% and
+            bottom 5% will be saved. Defaults to 5.
+        model_type (str, optional): The type of model to train (e.g., 'cnn').
+            Defaults to 'cnn'.
+        num_trials (int, optional): The total number of experiment trials to run.
+            Defaults to 100.
+        same_class (bool, optional): If True, when calculating nearest training
+            point distances, only consider training points from the same class
+            as the test point. Defaults to False.
+        folder_name (str, optional): The name of the folder where the experiment
+            results will be saved. Defaults to 'experiment_data'.
+
+    Returns:
+        None: The function saves the results to CSV files and does not return
+        any value.
+    '''
+    num_processes = min(num_trials, cpu_count())
+    print(f"Running {num_trials} trials in parallel using {num_processes} processes...")
+
+    # Load the full dataset once in the main process to reduce memory overhead
+    print("Loading dataset once in main process...")
+    if dataset == 'cifar10':
+        full_x, full_y, full_ids = dataloader.loadFullCIFAR10(normalize=True)
+
+    # Create a list of tuples, where each tuple contains all parameters for a single trial
+    trial_params_list = [
+        (trial + 1, dataset, train_ratio, percent, model_type, same_class, full_x, full_y, full_ids)
+        for trial in range(num_trials)
+    ]
+
+    # Use a process pool to run trials in parallel
+    with Pool(processes=num_processes) as pool:
+        all_results = pool.starmap(run_single_trial, trial_params_list)
+
+    # Aggregate results from all trials
+    all_trials_bottom_conf = []
+    all_trials_top_conf = []
+    all_trials_bottom_train_dist = []
+    all_trials_top_train_dist = []
+    all_trials_bottom_ids = []
+    all_trials_top_ids = []
+    all_trials_num = []
+    
+    for result in all_results:
+        all_trials_bottom_conf.extend(result["bottom_conf"])
+        all_trials_top_conf.extend(result["top_conf"])
+        all_trials_bottom_train_dist.extend(result["bottom_train_dist"])
+        all_trials_top_train_dist.extend(result["top_train_dist"])
+        all_trials_bottom_ids.extend(result["bottom_ids"])
+        all_trials_top_ids.extend(result["top_ids"])
+        all_trials_num.extend(result["trial_num"])
+
+    # Save all trials post experiment data
+    df_bottom = pd.DataFrame(
+        {"ID": all_trials_bottom_ids,
+         "Train distance": all_trials_bottom_train_dist,
+         "Confidence": all_trials_bottom_conf,
+         "Trial": all_trials_num}
+    )
+
+    df_top = pd.DataFrame(
+        {"ID": all_trials_top_ids,
+         "Train distance": all_trials_top_train_dist,
+         "Confidence": all_trials_top_conf,
+         "Trial": all_trials_num}
+    )
+
+    os.makedirs(folder_name, exist_ok=True)
+    df_bottom.to_csv(os.path.join(folder_name, "bottom_percent.csv"), index=False)
+    df_top.to_csv(os.path.join(folder_name, "top_percent.csv"), index=False)
+    print(f"All {num_trials} trials completed and data saved to '{folder_name}'.")
+
 def save_model_weights(model, file_name):
     '''
     Saves the given model weights only to the file_name location.
@@ -511,15 +649,12 @@ def main():
     train_ratio_string = ['1-to-5', '1-to-1', '5-to-1']
     for i, train_ratio in enumerate([0.1667, 0.5, 0.8333]):
         folder_name = f"{month_number}-{day_number}-cnn-cifar10-same-class-train-ratio-{train_ratio_string[i]}"
-        raw_experiment('cifar10', train_ratio, percent=5, model_type='cnn', num_trials=100, same_class=True, folder_name=folder_name)
+        raw_experiment_parallel('cifar10', train_ratio, percent=5, model_type='cnn', num_trials=100, same_class=True, folder_name=folder_name)
         zip_folder(folder_name, folder_name)
 
         folder_name = f"{month_number}-{day_number}-cnn-cifar10-diff-class-train-ratio-{train_ratio_string[i]}"
-        raw_experiment('cifar10', train_ratio, percent=5, model_type='cnn', num_trials=100, same_class=False, folder_name=folder_name)
+        raw_experiment_parallel('cifar10', train_ratio, percent=5, model_type='cnn', num_trials=100, same_class=False, folder_name=folder_name)
         zip_folder(folder_name, folder_name)
-
-def main():
-    check_gpu()
 
 if __name__ == '__main__':
     main()
