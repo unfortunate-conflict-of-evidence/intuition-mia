@@ -58,7 +58,7 @@ def multi_imshow(img_arr, start=None, stop=None, labels_arr=None):
     '''
     Plots img_arr[start:stop] (inclusive) on a square grid.
     If start and/or stop is not given, assume beginning and end of img_arr.
-    Optionally, display image labels.
+    Optionally, display image labels (currently hardcoded for CIFAR-10).
     '''
     if start is None:
         start = 0
@@ -402,8 +402,8 @@ def raw_experiment(dataset, train_ratio=0.5, percent=5, model_type='cnn', num_tr
 
     for trial in range(num_trials):
         # Load and preprocess data
-        if dataset == 'cifar10':
-            train_x, train_y, train_ids, test_x, test_y, test_ids = dataloader.loadCIFAR10(normalize=True, train_ratio=train_ratio, random_state=None)
+        if dataset == 'cifar10' or 'cifar100':
+            train_x, train_y, train_ids, test_x, test_y, test_ids = dataloader.loadCIFAR(dataset, normalize=True, train_ratio=train_ratio, random_state=None)
             train_x, test_x = dataloader.standardCIFAR(train_x, test_x)
         
         # Train model
@@ -473,7 +473,7 @@ def run_single_trial(trial, dataset, train_ratio, percent, model_type, same_clas
     )
 
     # Preprocess the data after splitting
-    if dataset == 'cifar10':
+    if dataset == 'cifar10' or dataset == 'cifar100':
         train_x, test_x = dataloader.standardCIFAR(train_x, test_x)
     
     # Train model
@@ -543,13 +543,14 @@ def raw_experiment_parallel(dataset, train_ratio=0.5, percent=5, model_type='cnn
         None: The function saves the results to CSV files and does not return
         any value.
     '''
-    num_processes = min(num_trials, cpu_count())
+    #num_processes = min(num_trials, cpu_count())
+    num_processes = int(os.environ['SLURM_CPUS_PER_TASK'])
     print(f"Running {num_trials} trials in parallel using {num_processes} processes...")
 
     # Load the full dataset once in the main process to reduce memory overhead
     print("Loading dataset once in main process...")
-    if dataset == 'cifar10':
-        full_x, full_y, full_ids = dataloader.loadFullCIFAR10(normalize=True)
+    if dataset == 'cifar10' or dataset == 'cifar100':
+        full_x, full_y, full_ids = dataloader.loadFullCIFAR(dataset, normalize=True)
 
     # Create a list of tuples, where each tuple contains all parameters for a single trial
     trial_params_list = [
