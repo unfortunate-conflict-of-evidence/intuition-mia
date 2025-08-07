@@ -70,56 +70,70 @@ def readCIFAR10(data_path, normalize=True, train_ratio=0.8, random_state=None):
 	return (X_train.reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1), y_train, ids_train,
             X_test.reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1), y_test, ids_test)
 
-def loadCIFAR10(normalize=True, train_ratio=0.8, random_state=None):
-	'''
-	Formats CIFAR-10 data loaded from keras. Slower than readCIFAR10.
-	Returns image data in (num_images, height, width, channels) format.
-	Also returns lists of unique IDs for train and test images.
-	Allows for custom train:test split.
-	
-	Args:
-		normalize: If True, returns float data in [0, 1] range.
-                   If False, returns uint8 data in [0, 255] range.
-		train_ratio: ratio of training to test images [0, 1]
-		random_state: used to fix shuffling and splitting
-		
-	Returns:
-        tuple: (train_images, train_labels, train_ids,
-		        test_images, test_labels, test_ids)
-	'''
-	cifar10 = keras.datasets.cifar10
-	(x_train, y_train), (x_test, y_test) = cifar10.load_data()
-	
-    # Combine all data
-	X_combined = np.concatenate((x_train, x_test), axis=0)
-	y_combined = np.concatenate((y_train, y_test), axis=0).flatten()
-
-	if normalize:
-		X_combined = X_combined / 255.0
-	
-    # Generate unique IDs for all images before shuffling
-	image_ids = np.arange(len(X_combined))
-		
-    # Split data and IDs
-	x_train, x_test, y_train, y_test, ids_train, ids_test = train_test_split(
-        X_combined, y_combined, image_ids, train_size=train_ratio, random_state=random_state, stratify=y_combined
-	)
-	return x_train, y_train, ids_train, x_test, y_test, ids_test
-
-def loadFullCIFAR10(normalize=True):
+def loadCIFAR(dataset='cifar10', normalize=True, train_ratio=0.8, random_state=None):
     '''
-    Loads the full CIFAR-10 dataset without splitting it into train/test.
+    Formats CIFAR data loaded from keras. Slower than readCIFAR10.
+    Returns image data in (num_images, height, width, channels) format.
+    Also returns lists of unique IDs for train and test images.
+    Allows for custom train:test split.
+
+    Args:
+        dataset: 'cifar10' or 'cifar100'
+        normalize: If True, returns float data in [0, 1] range.
+                    If False, returns uint8 data in [0, 255] range.
+        train_ratio: ratio of training to test images [0, 1]
+        random_state: used to fix shuffling and splitting
+        
+    Returns:
+        tuple: (train_images, train_labels, train_ids,
+                test_images, test_labels, test_ids)
+    '''
+    if dataset == 'cifar10':
+        dataset_loader = keras.datasets.cifar10
+    elif dataset == 'cifar100':
+        dataset_loader = keras.datasets.cifar100
+    else:
+        raise ValueError("Unsupported dataset. Choose 'cifar10' or 'cifar100'.")
+
+    (x_train, y_train), (x_test, y_test) = dataset_loader.load_data()
+
+    # Combine all data
+    X_combined = np.concatenate((x_train, x_test), axis=0)
+    y_combined = np.concatenate((y_train, y_test), axis=0).flatten()
+
+    if normalize:
+        X_combined = X_combined / 255.0
+
+    # Generate unique IDs for all images before shuffling
+    image_ids = np.arange(len(X_combined))
+        
+    # Split data and IDs
+    x_train, x_test, y_train, y_test, ids_train, ids_test = train_test_split(
+        X_combined, y_combined, image_ids, train_size=train_ratio, random_state=random_state, stratify=y_combined
+    )
+    return x_train, y_train, ids_train, x_test, y_test, ids_test
+
+def loadFullCIFAR(dataset='cifar10', normalize=True):
+    '''
+    Loads the full CIFAR dataset without splitting it into train/test.
     Returns the concatenated images, labels, and unique IDs.
 	Image data is in (num_images, height, width, channels) format.
 	
 	Args:
+        dataset: 'cifar10' or 'cifar100'
 		normalize: If True, returns float data in [0, 1] range.
 		
 	Returns:
         tuple: (images, labels, ids)
     '''
-    cifar10 = keras.datasets.cifar10
-    (x_train, y_train), (x_test, y_test) = cifar10.load_data()
+    if dataset == 'cifar10':
+        dataset_loader = keras.datasets.cifar10
+    elif dataset == 'cifar100':
+        dataset_loader = keras.datasets.cifar100
+    else:
+        raise ValueError("Unsupported dataset. Choose 'cifar10' or 'cifar100'.")
+
+    (x_train, y_train), (x_test, y_test) = dataset_loader.load_data()
     
     full_x = np.concatenate((x_train, x_test), axis=0)
     full_y = np.concatenate((y_train, y_test), axis=0).flatten()
