@@ -49,6 +49,7 @@ def main():
     # -------------------------------
 
     print(args)
+    experimenter.check_gpu()
 
     # Run experiment
     experimenter.raw_experiment_parallel(
