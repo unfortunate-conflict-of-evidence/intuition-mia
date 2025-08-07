@@ -25,6 +25,8 @@ def main():
     parser.add_argument('--model_type', type=str, default='cnn')
     parser.add_argument('--num_trials', type=int, default=100)
     parser.add_argument('--same_class', type=str_to_bool, default=False)
+    # Enable or disable multiprocessing (set to False when using GPU)
+    parser.add_argument('--multiprocessing', type=str_to_bool, default=False)
     # Do not set a default here, so its value will be None if not provided
     parser.add_argument('--folder_name', type=str, required=False)
 
@@ -52,14 +54,15 @@ def main():
     experimenter.check_gpu()
 
     # Run experiment
-    experimenter.raw_experiment_parallel(
+    experimenter.run_experiment(
         args.dataset,
         args.train_ratio,
         args.percent,
         args.model_type,
         args.num_trials,
         args.same_class,
-        args.folder_name
+        args.folder_name,
+        args.multiprocessing
     )
     experimenter.zip_folder(args.folder_name, args.folder_name)
 
