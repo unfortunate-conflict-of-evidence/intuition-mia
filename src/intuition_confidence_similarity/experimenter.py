@@ -9,7 +9,6 @@ Based on https://github.com/AhmedSalem2/ML-Leaks/blob/master/mlLeaks.py
 
 import os
 import math
-import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.model_selection import train_test_split
 import classifier
@@ -21,6 +20,12 @@ from datetime import date
 import shutil
 from multiprocessing import Pool, cpu_count
 import warnings
+try:
+    import cupy as np
+    print("Running on GPU with CuPy")
+except ImportError:
+    import numpy as np
+    print("Running on CPU with NumPy")
 
 # Suppress common warnings that can be noisy
 warnings.filterwarnings('ignore', category=UserWarning)
