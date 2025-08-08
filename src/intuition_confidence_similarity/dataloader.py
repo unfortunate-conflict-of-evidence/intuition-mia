@@ -7,15 +7,10 @@ Based on https://github.com/AhmedSalem2/ML-Leaks/blob/master/mlLeaks.py
 
 '''
 
+import numpy as np
 from sklearn.model_selection import train_test_split
 import pickle
 from tensorflow import keras
-try:
-    import cupy as np
-    print("Running on GPU with CuPy")
-except ImportError:
-    import numpy as np
-    print("Running on CPU with NumPy")
 
 labelsCIFAR10 = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
 

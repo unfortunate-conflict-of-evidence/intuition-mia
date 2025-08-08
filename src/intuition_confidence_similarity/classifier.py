@@ -9,16 +9,11 @@ Based on https://github.com/csong27/membership-inference/blob/master/classifier.
 '''
 
 from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score
+import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from keras.callbacks import EarlyStopping
 from keras import layers
-try:
-    import cupy as np
-    print("Running on GPU with CuPy")
-except ImportError:
-    import numpy as np
-    print("Running on CPU with NumPy")
 
 def get_cnn_model(n_in, n_hidden, n_out):
     '''
