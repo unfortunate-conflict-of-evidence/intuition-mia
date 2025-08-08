@@ -16,9 +16,18 @@ from keras import layers
 try:
     import cupy as np
     print("Running on GPU with CuPy")
+
+    def to_gpu(arr):
+        '''Converts a NumPy array to a CuPy array.'''
+        return np.asarray(arr)
+    
 except ImportError:
     import numpy as np
     print("Running on CPU with NumPy")
+
+    def to_gpu(arr):
+        '''Passes through the array without conversion for CPU execution.'''
+        return arr
 
 def get_cnn_model(n_in, n_hidden, n_out):
     '''

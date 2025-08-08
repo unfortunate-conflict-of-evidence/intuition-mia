@@ -13,66 +13,83 @@ from tensorflow import keras
 try:
     import cupy as np
     print("Running on GPU with CuPy")
+
+    def to_gpu(arr):
+        '''Converts a NumPy array to a CuPy array.'''
+        return np.asarray(arr)
+    
 except ImportError:
     import numpy as np
     print("Running on CPU with NumPy")
 
+    def to_gpu(arr):
+        '''Passes through the array without conversion for CPU execution.'''
+        return arr
+
 labelsCIFAR10 = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
 
 def readCIFAR10(data_path, normalize=True, train_ratio=0.8, random_state=None):
-	'''
-	Reads and formats downloaded CIFAR-10 data from a specified filepath.
-	Returns image data in (num_images, height, width, channels) format.
-	Also returns lists of unique IDs for train and test images.
-	Allows for custom train:test split.
-	
-	Args:
-	    data_path: path to the CIFAR-10 data folder
-		normalize: If True, returns float data in [0, 1] range.
-                   If False, returns uint8 data in [0, 255] range.
-		train_ratio: ratio of training to test images [0, 1]
-		random_state: used to fix shuffling and splitting
-		
-	Returns:
+    '''
+    Reads and formats downloaded CIFAR-10 data from a specified filepath.
+    Returns image data in (num_images, height, width, channels) format.
+    Also returns lists of unique IDs for train and test images.
+    Allows for custom train:test split.
+
+    Args:
+        data_path: path to the CIFAR-10 data folder
+        normalize: If True, returns float data in [0, 1] range.
+                    If False, returns uint8 data in [0, 255] range.
+        train_ratio: ratio of training to test images [0, 1]
+        random_state: used to fix shuffling and splitting
+        
+    Returns:
         tuple: (train_images, train_labels, train_ids,
-		        test_images, test_labels, test_ids)
-	'''
-	X_all_train = []
-	y_all_train = []
-	
-	for i in range(5):
-		f = open(data_path + '/data_batch_' + str(i + 1), 'rb')
-		train_data_dict = pickle.load(f, encoding='bytes')
-		f.close()
+                test_images, test_labels, test_ids)
+    '''
+    X_all_train = []
+    y_all_train = []
 
-		X_all_train.append(train_data_dict[b'data'])
-		y_all_train.append(train_data_dict[b'labels'])
-		
-	X_all_train = np.concatenate(X_all_train, axis=0)
-	y_all_train = np.concatenate(y_all_train, axis=0)
-		
-	f = open(data_path + '/test_batch', 'rb')
-	test_data_dict = pickle.load(f, encoding='bytes')
-	f.close()
-	
-	XTest = np.array(test_data_dict[b'data'])
-	yTest = np.array(test_data_dict[b'labels'])
-	
+    for i in range(5):
+        f = open(data_path + '/data_batch_' + str(i + 1), 'rb')
+        train_data_dict = pickle.load(f, encoding='bytes')
+        f.close()
+
+        X_all_train.append(train_data_dict[b'data'])
+        y_all_train.append(train_data_dict[b'labels'])
+        
+    X_all_train = to_gpu(np.concatenate(X_all_train, axis=0))
+    y_all_train = to_gpu(np.concatenate(y_all_train, axis=0))
+        
+    f = open(data_path + '/test_batch', 'rb')
+    test_data_dict = pickle.load(f, encoding='bytes')
+    f.close()
+
+    XTest = to_gpu(np.array(test_data_dict[b'data']))
+    yTest = to_gpu(np.array(test_data_dict[b'labels']))
+
     # Combine all data
-	X_combined = np.concatenate((X_all_train, XTest), axis=0)
-	y_combined = np.concatenate((y_all_train, yTest), axis=0)
+    X_combined = np.concatenate((X_all_train, XTest), axis=0)
+    y_combined = np.concatenate((y_all_train, yTest), axis=0)
 
-	if normalize:
-		X_combined = X_combined / 255.0
-		
+    if normalize:
+        X_combined = X_combined.astype(np.float32) / 255.0
+        
     # Generate unique IDs for all images before shuffling
-	image_ids = np.arange(len(X_combined))
+    image_ids = np.arange(len(X_combined))
 
     # Split data and IDs
-	X_train, X_test, y_train, y_test, ids_train, ids_test = train_test_split(
-        X_combined, y_combined, image_ids, train_size=train_ratio, random_state=random_state, stratify=y_combined
+    X_train, X_test, y_train, y_test, ids_train, ids_test = train_test_split(
+        X_combined.get(), y_combined.get(), image_ids.get(), train_size=train_ratio, random_state=random_state, stratify=y_combined.get()
     )
-	return (X_train.reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1), y_train, ids_train,
+
+    X_train = to_gpu(X_train)
+    X_test = to_gpu(X_test)
+    y_train = to_gpu(y_train)
+    y_test = to_gpu(y_test)
+    ids_train = to_gpu(ids_train)
+    ids_test = to_gpu(ids_test)
+
+    return (X_train.reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1), y_train, ids_train,
             X_test.reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1), y_test, ids_test)
 
 def loadCIFAR(dataset='cifar10', normalize=True, train_ratio=0.8, random_state=None):
@@ -102,20 +119,33 @@ def loadCIFAR(dataset='cifar10', normalize=True, train_ratio=0.8, random_state=N
 
     (x_train, y_train), (x_test, y_test) = dataset_loader.load_data()
 
+    x_train = to_gpu(x_train)
+    y_train = to_gpu(y_train)
+    x_test = to_gpu(x_test)
+    y_test = to_gpu(y_test)
+
     # Combine all data
     X_combined = np.concatenate((x_train, x_test), axis=0)
     y_combined = np.concatenate((y_train, y_test), axis=0).flatten()
 
     if normalize:
-        X_combined = X_combined / 255.0
+        X_combined = X_combined.astype(np.float32) / 255.0
 
     # Generate unique IDs for all images before shuffling
     image_ids = np.arange(len(X_combined))
         
     # Split data and IDs
     x_train, x_test, y_train, y_test, ids_train, ids_test = train_test_split(
-        X_combined, y_combined, image_ids, train_size=train_ratio, random_state=random_state, stratify=y_combined
+        X_combined.get(), y_combined.get(), image_ids.get(), train_size=train_ratio, random_state=random_state, stratify=y_combined.get()
     )
+
+    x_train = to_gpu(x_train)
+    x_test = to_gpu(x_test)
+    y_train = to_gpu(y_train)
+    y_test = to_gpu(y_test)
+    ids_train = to_gpu(ids_train)
+    ids_test = to_gpu(ids_test)
+
     return x_train, y_train, ids_train, x_test, y_test, ids_test
 
 def loadFullCIFAR(dataset='cifar10', normalize=True):
@@ -139,6 +169,11 @@ def loadFullCIFAR(dataset='cifar10', normalize=True):
         raise ValueError("Unsupported dataset. Choose 'cifar10' or 'cifar100'.")
 
     (x_train, y_train), (x_test, y_test) = dataset_loader.load_data()
+
+    x_train = to_gpu(x_train)
+    y_train = to_gpu(y_train)
+    x_test = to_gpu(x_test)
+    y_test = to_gpu(y_test)
     
     full_x = np.concatenate((x_train, x_test), axis=0)
     full_y = np.concatenate((y_train, y_test), axis=0).flatten()
@@ -147,7 +182,7 @@ def loadFullCIFAR(dataset='cifar10', normalize=True):
     full_ids = np.arange(num_samples)
 	
     if normalize:
-        full_x = full_x / 255.0
+        full_x = full_x.astype(np.float32) / 255.0
 		
     return full_x, full_y, full_ids
 
