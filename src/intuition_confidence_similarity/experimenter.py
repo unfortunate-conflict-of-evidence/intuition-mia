@@ -288,7 +288,7 @@ def nearest_train_batch(
 
     return distances
 
-def top_bottom_percent_conf_subsets(norm_confidences, norm_train_distances, ids, percent):
+def top_bottom_percent_conf_subsets(norm_confidences, norm_train_distances, ids, is_member, percent):
     '''
     Extracts subsets of data corresponding to the top and bottom percent of
     normalized confidence values.
@@ -309,6 +309,9 @@ def top_bottom_percent_conf_subsets(norm_confidences, norm_train_distances, ids,
             A 1D array of unique identifiers, where each element
             corresponds positionally to a confidence value in
             `norm_confidences`.
+        is_member (np.ndarray):
+            A 1D boolean array indicating whether each data point
+            is a member of the training set.
         percent (float):
             The percentage (e.g., 10.0 for 10%) of the total data points
             to select for both the top and bottom subsets. The number of
@@ -327,6 +330,10 @@ def top_bottom_percent_conf_subsets(norm_confidences, norm_train_distances, ids,
             - bottom_ids (np.ndarray): Identifiers corresponding to the
               bottom 'percent' of data points.
             - top_ids (np.ndarray): Identifiers corresponding to the
+              top 'percent' of data points.
+            - bottom_is_member (np.ndarray): Membership status for the
+              bottom 'percent' of data points.
+            - top_is_member (np.ndarray): Membership status for the
               top 'percent' of data points.
     '''
     length = len(norm_confidences)
@@ -352,7 +359,10 @@ def top_bottom_percent_conf_subsets(norm_confidences, norm_train_distances, ids,
     # Get corresponding training point distances
     top_train_dist = norm_train_distances[top_indices]
 
-    return bottom_conf, top_conf, bottom_train_dist, top_train_dist, ids[bottom_indices], ids[top_indices]
+    return (bottom_conf, top_conf, 
+                bottom_train_dist, top_train_dist,
+                ids[bottom_indices], ids[top_indices],
+                is_member[bottom_indices], is_member[top_indices])
 
 def run_experiment(dataset, train_ratio=0.5, percent=5, model_type='cnn', num_trials=100, same_class=False, folder_name='experiment_data', use_multiprocessing=False):
     '''
@@ -421,6 +431,7 @@ def run_experiment(dataset, train_ratio=0.5, percent=5, model_type='cnn', num_tr
     all_trials_bottom_conf, all_trials_top_conf = [], []
     all_trials_bottom_train_dist, all_trials_top_train_dist = [], []
     all_trials_bottom_ids, all_trials_top_ids = [], []
+    all_trials_bottom_is_member, all_trials_top_is_member = [], []
     all_trials_num = []
 
     for result in all_results:
@@ -430,12 +441,15 @@ def run_experiment(dataset, train_ratio=0.5, percent=5, model_type='cnn', num_tr
         all_trials_top_train_dist.extend(result["top_train_dist"])
         all_trials_bottom_ids.extend(result["bottom_ids"])
         all_trials_top_ids.extend(result["top_ids"])
+        all_trials_bottom_is_member.extend(result["bottom_is_member"])
+        all_trials_top_is_member.extend(result["top_is_member"])
         all_trials_num.extend(result["trial_num"])
 
     df_bottom = pd.DataFrame({
         "ID": all_trials_bottom_ids,
         "Train distance": all_trials_bottom_train_dist,
         "Confidence": all_trials_bottom_conf,
+        "Membership": all_trials_bottom_is_member,
         "Trial": all_trials_num
     })
 
@@ -443,6 +457,7 @@ def run_experiment(dataset, train_ratio=0.5, percent=5, model_type='cnn', num_tr
         "ID": all_trials_top_ids,
         "Train distance": all_trials_top_train_dist,
         "Confidence": all_trials_top_conf,
+        "Membership": all_trials_top_is_member,
         "Trial": all_trials_num
     })
 
@@ -483,9 +498,12 @@ def run_single_trial(trial, dataset, train_ratio, percent, model_type, same_clas
         full_features = get_image_features(features_model, full_x)
 
         distances = nearest_train_batch(full_features, full_y, train_features, train_y, 'angular_distance', same_class)
+    
+    # Boolean list to determine membership
+    is_member = np.isin(full_ids, train_ids)
 
-    # Get top/bottom percent confidence, distance, and id subsets
-    bottom_conf, top_conf, bottom_train_dist, top_train_dist, bottom_ids, top_ids = top_bottom_percent_conf_subsets(confidences, distances, full_ids, percent)
+    # Get top/bottom percent confidence, distance, id, and membership subsets
+    bottom_conf, top_conf, bottom_train_dist, top_train_dist, bottom_ids, top_ids, bottom_is_member, top_is_member = top_bottom_percent_conf_subsets(confidences, distances, full_ids, is_member, percent)
 
     print(f"Trial {trial} completed.")
     
@@ -497,6 +515,8 @@ def run_single_trial(trial, dataset, train_ratio, percent, model_type, same_clas
         "top_train_dist": top_train_dist,
         "bottom_ids": bottom_ids,
         "top_ids": top_ids,
+        "bottom_is_member": bottom_is_member,
+        "top_is_member": top_is_member,
         "trial_num": np.full(bottom_conf.shape, trial)
     }
 
