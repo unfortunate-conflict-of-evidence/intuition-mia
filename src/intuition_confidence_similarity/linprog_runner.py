@@ -3,6 +3,7 @@ import argparse
 from datetime import date
 from runner import str_to_bool
 from experimenter import zip_folder
+import numpy as np
 
 def main():
     parser = argparse.ArgumentParser(description='Run a linear programming experiment.')
@@ -21,10 +22,12 @@ def main():
                         help='Whether to find the nearest neighbor from the same class.')
     parser.add_argument('--exp_name', type=str, required=True,
                         help='The name of the experiment folder.')
-    parser.add_argument('--ideal_slope', type=float, default=1.0,
-                        help='The slope of the ideal separating line.')
-    parser.add_argument('--ideal_intercept', type=float, default=0.0,
-                        help='The intercept of the ideal separating line.')
+    parser.add_argument('--num_dimensions', type=int, default=2,
+                        help='The number of dimensions for the data.')
+    parser.add_argument('--ideal_weights', nargs='+', type=float, default=[1.0, 1.0],
+                        help='The weight vector of the ideal separating hyperplane.')
+    parser.add_argument('--ideal_bias', type=float, default=0.0,
+                        help='The bias of the ideal separating hyperplane.')
     parser.add_argument('--base_folder', type=str, required=False,
                         help='The name of the base directory.')
 
@@ -37,14 +40,14 @@ def main():
         month_number = today.month
         day_number = today.day
         
-        if args.same_class:
-            class_string = "same-class"
-        else:
-            class_string = "diff-class"
+        # if args.same_class:
+        #     class_string = "same-class"
+        # else:
+        #     class_string = "diff-class"
 
         args.base_folder = (
             f"{month_number}-{day_number}-linprog-"
-            f"{class_string}-train-size-{args.train_size}"
+            f"{args.num_dimensions}D-train-size-{args.train_size}"
         )
     # -------------------------------
 
@@ -53,15 +56,16 @@ def main():
     # Run experiment
     linprog_experimenter.execute_linprog_experiments(
         args.exp_name, 
-        args.ideal_slope, 
-        args.ideal_intercept, 
+        np.array(args.ideal_weights), 
+        args.ideal_bias, 
         args.train_size, 
         args.grid_size, 
         args.granularity, 
         args.num_trials, 
         args.percent, 
         args.same_class, 
-        args.base_folder
+        args.base_folder,
+        args.num_dimensions
     )
 
 if __name__ == '__main__':

@@ -89,39 +89,3 @@ class LinearBinaryClassifier:
             np.ndarray: The signed distances for each data point, with shape (n_samples,).
         '''
         return np.dot(X, self.weights) + self.bias # signed distance
-
-    def get_slope_intercept(self):
-        '''
-        Calculates the slope and intercept of the decision boundary line.
-
-        Returns:
-            tuple[float, float]: A tuple containing the slope and intercept of the boundary line.
-                The slope is float('inf') for a vertical line.
-        '''
-        w = self.weights
-        b = self.bias
-        
-        return wb2slope_intercept(w, b)
-
-def wb2slope_intercept(w, b):
-    '''
-    Converts a weight vector and bias into the slope and intercept of the corresponding line.
-
-    This is useful for visualizing or interpreting the decision boundary.
-
-    Args:
-        w (np.ndarray): The weight vector of the line, with shape (2,).
-        b (float): The bias or intercept term of the line.
-
-    Returns:
-        tuple[float, float]: A tuple containing the slope and intercept of the line.
-            The slope is float('inf') for a vertical line.
-    '''
-    if w[1] == 0: # vertical line
-        slope = float('inf')
-        intercept = -b / w[0]
-    else:
-        slope = -w[0] / w[1]
-        intercept = -b / w[1]
-    
-    return slope, intercept

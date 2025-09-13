@@ -14,7 +14,7 @@ from scipy.spatial import cKDTree
 from linprog_classifier import LinearBinaryClassifier
 from experimenter import top_bottom_percent_conf_subsets
 
-def rand_train_data(train_size, full_data, full_ids, ideal_slope, ideal_intercept, random_seed=None):
+def rand_train_data(train_size, full_data, full_ids, ideal_weights, ideal_bias, random_seed=None):
     '''
     Generates synthetic training data by sampling from a full set of grid points.
 
@@ -22,13 +22,13 @@ def rand_train_data(train_size, full_data, full_ids, ideal_slope, ideal_intercep
         train_size (int): The number of training data points to generate.
         full_data (np.ndarray): The complete array of all possible grid points.
         full_ids (np.ndarray): The corresponding unique IDs for each point in full_data.
-        ideal_slope (float): The slope of the ideal separating line. Use float('inf') for a vertical line.
-        ideal_intercept (float): The y-intercept of the ideal separating line (or x-intercept if the line is vertical).
+        ideal_weights (np.ndarray): The weight vector of the ideal separating hyperplane.
+        ideal_bias (float): The bias of the ideal separating hyperplane.
         random_seed (int): An optional integer to set the random seed for reproducibility.
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray]: A tuple containing:
-            - X_train (np.ndarray): The training data points, with shape (train_size, 2).
+            - X_train (np.ndarray): The training data points.
             - y_train (np.ndarray): The corresponding class labels (1 or -1) for each data point.
             - train_ids (np.ndarray): The unique IDs corresponding to the training data.
     '''
@@ -42,17 +42,14 @@ def rand_train_data(train_size, full_data, full_ids, ideal_slope, ideal_intercep
     X_train = full_data[sampled_indices]
     train_ids = full_ids[sampled_indices]
     
-    # Generate labels based on the ideal separating line
-    if ideal_slope == float('inf'): # vertical line
-        y_train = np.where(X_train[:, 0] > ideal_intercept, 1, -1) # use x-intercept
-    else:
-        y_train = np.where(X_train[:, 1] > ideal_slope * X_train[:, 0] + ideal_intercept, 1, -1)
-        
+    # Generate labels based on the ideal separating hyperplane
+    y_train = np.where(np.dot(X_train, ideal_weights) + ideal_bias > 0, 1, -1)
+
     return X_train, y_train, train_ids
 
-def exhaust_test_data(grid_size, granularity):
+def exhaust_test_data(grid_size, granularity, dimensions):
     '''
-    Generates all possible test data points on a discrete grid.
+    Generates all possible test data points on a discrete grid in n-dimensions.
 
     This function creates a complete grid of points within a specified range and granularity,
     which can be used to thoroughly test the classifier's performance across the entire domain.
@@ -60,45 +57,48 @@ def exhaust_test_data(grid_size, granularity):
     Args:
         grid_size (float): The size of the square grid (e.g., a grid from 0 to grid_size).
         granularity (float): The step size between points on the grid.
+        dimensions (int): The number of dimensions for the grid.
 
     Returns:
         tuple[np.ndarray, np.ndarray]: A tuple containing:
-            - X_test (np.ndarray): All possible data points on the grid, with shape ((grid_size/granularity+1)^2, 2).
+            - X_test (np.ndarray): All possible data points on the grid.
             - test_point_ids (np.ndarray): A unique identifier for each test point.
     '''
     values = np.arange(0, grid_size + granularity, granularity)
-    x1, x2 = np.meshgrid(values, values)
-    X_test = np.stack((x1.flatten(), x2.flatten()), axis=-1)
+
+    # Use a list of value arrays for meshgrid to handle n-dimensions
+    mesh_args = [values] * dimensions
+    X_test = np.array(np.meshgrid(*mesh_args)).T.reshape(-1, dimensions)
+
     # generate unique IDs for each test point
     test_point_ids = np.arange(len(X_test))
     return X_test, test_point_ids
 
-def norm_bound_dist(bound_distances, predict_slope, predict_intercept, grid_size):
+def norm_bound_dist(bound_distances, predict_weights, predict_bias, grid_size):
     '''
     Normalizes the distance from a point to the decision boundary by dividing by the
     maximum possible distance within the grid.
     
     Args:
         bound_distances (np.ndarray): The distances to the decision boundary.
-        predict_slope (float): The slope of the predicted separating line.
-        predict_intercept (float): The intercept of the predicted separating line.
+        predict_weights (np.ndarray): The weight vector of the predicted separating hyperplane.
+        predict_bias (float): The bias of the predicted separating hyperplane.
         grid_size (float): The size of the grid.
         
     Returns:
         np.ndarray: The normalized distances.
     '''
-    corners = np.array([(0, 0), (grid_size, 0), (0, grid_size), (grid_size, grid_size)])
+    dimensions = len(predict_weights)
+    # Generate corners of the n-dimensional hypercube
+    corners_coords = np.array(np.meshgrid(*[[0, grid_size]] * dimensions)).T.reshape(-1, dimensions)
 
-    if predict_slope == float('inf'): # vertical line
-        corner_dist = np.abs(corners[:, 0] - predict_intercept)
-    else:
-        A = -predict_slope
-        B = 1
-        C = -predict_intercept
-        corner_dist = np.abs((A * corners[:, 0] + B * corners[:, 1] + C) / math.sqrt(A**2 + B**2))
+    corner_dist = np.abs(np.dot(corners_coords, predict_weights) + predict_bias)
     
     max_corner_dist = np.max(corner_dist)
-    norm_bound_distances = bound_distances / max_corner_dist
+    if max_corner_dist == 0:
+      norm_bound_distances = np.zeros_like(bound_distances)
+    else:
+      norm_bound_distances = bound_distances / max_corner_dist
 
     return norm_bound_distances
 
@@ -178,7 +178,7 @@ def get_sig_confidence(signed_bound_distances):
 
     return confidence_values
 
-def run_single_trial(trial, grid_size, model, X_train, y_train, train_ids, X_test, test_ids, percent, same_class, ideal_slope, ideal_intercept, use_sigmoid):
+def run_single_trial(trial, grid_size, model, X_train, y_train, train_ids, X_test, test_ids, percent, same_class, ideal_weights, ideal_bias, use_sigmoid):
     '''
     Runs a single trial of the linear programming experiment.
 
@@ -190,7 +190,7 @@ def run_single_trial(trial, grid_size, model, X_train, y_train, train_ids, X_tes
 
     # Calculate distances to the nearest training point
     train_distances = get_train_distances(
-        X_train, y_train, X_test, ideal_slope, ideal_intercept, same_class
+        X_train, y_train, X_test, ideal_weights, ideal_bias, same_class
     )
 
     # Normalize distances to the decision boundary as confidences
@@ -198,8 +198,9 @@ def run_single_trial(trial, grid_size, model, X_train, y_train, train_ids, X_tes
         confidences = get_sig_confidence(decision_distances)
     else:
         decision_distances = np.abs(decision_distances)
-        predict_slope, predict_intercept = model.get_slope_intercept()
-        confidences = norm_bound_dist(decision_distances, predict_slope, predict_intercept, grid_size)
+        predict_weights = model.weights
+        predict_bias = model.bias
+        confidences = norm_bound_dist(decision_distances, predict_weights, predict_bias, grid_size)
 
     # Boolean list to determine membership
     is_member = np.isin(test_ids, train_ids)
@@ -222,14 +223,14 @@ def run_single_trial(trial, grid_size, model, X_train, y_train, train_ids, X_tes
 
 def run_experiment(exp_name, num_trials, train_size, grid_size,
                    X_test, test_ids, percent, same_class,
-                   ideal_slope, ideal_intercept, base_folder, use_sigmoid=False):
+                   ideal_weights, ideal_bias, base_folder, use_sigmoid=False):
     '''
     Conducts a series of machine learning experiments to analyze model confidence and
     nearest training point distances for top and bottom confidence predictions.
 
     For each trial, the function trains a binary classifer using linear programming
     on linearly separable data, whose ground truth is determined by the given ideal
-    slope and ideal intercept describing an ideal decision boundary. It queries the
+    weights and ideal bias describing an ideal decision boundary. It queries the
     model for prediction confidences on the dataset, and calculates the distances
     to the nearest training point for each query sample. It then identifies the
     top and bottom percent of samples based on prediction confidence and saves
@@ -256,8 +257,8 @@ def run_experiment(exp_name, num_trials, train_size, grid_size,
         test_ids (np.ndarray): Unique IDs for each test point.
         percent (int): The top/bottom percentage to analyze.
         same_class (bool): Whether to find the nearest neighbor from the same class.
-        ideal_slope (float): The slope of the ideal separating line.
-        ideal_intercept (float): The intercept of the ideal separating line.
+        ideal_weights (np.ndarray): The weight vector of the ideal separating hyperplane.
+        ideal_bias (float): The bias of the ideal separating hyperplane.
         base_folder (str): The base directory to save the results.
         use_sigmoid (bool): If True, use sigmoid confidence and load models.
                             If False, use normalized distance and train new models.
@@ -305,7 +306,7 @@ def run_experiment(exp_name, num_trials, train_size, grid_size,
             model = LinearBinaryClassifier(weights=weights, bias=bias)
         else:
             # Train a new model for each trial
-            X_train, y_train, train_ids = rand_train_data(train_size, X_test, test_ids, ideal_slope, ideal_intercept, random_seed=trial + 1)
+            X_train, y_train, train_ids = rand_train_data(train_size, X_test, test_ids, ideal_weights, ideal_bias, random_seed=trial + 1)
             model = LinearBinaryClassifier()
             model.train(X_train, y_train)
 
@@ -328,8 +329,8 @@ def run_experiment(exp_name, num_trials, train_size, grid_size,
             test_ids=test_ids,
             percent=percent,
             same_class=same_class,
-            ideal_slope=ideal_slope,
-            ideal_intercept=ideal_intercept,
+            ideal_weights=ideal_weights,
+            ideal_bias=ideal_bias,
             use_sigmoid=use_sigmoid
         )
 
@@ -381,7 +382,7 @@ def run_experiment(exp_name, num_trials, train_size, grid_size,
 
     print(f"Results saved to '{exp_dir}'.")
 
-def execute_linprog_experiments(exp_name, ideal_slope, ideal_intercept, train_size, grid_size, granularity, num_trials, percent, same_class, base_folder):
+def execute_linprog_experiments(exp_name, ideal_weights, ideal_bias, train_size, grid_size, granularity, num_trials, percent, same_class, base_folder, num_dimensions):
     '''
     Executes a pair of linear programming experiments on the same
     trained models using distance from the decision boundary first 
@@ -389,8 +390,8 @@ def execute_linprog_experiments(exp_name, ideal_slope, ideal_intercept, train_si
 
     Args:
         exp_name (str): The name for the experiment folder.
-        ideal_slope (float): The slope of the ideal separating line.
-        ideal_intercept (float): The intercept of the ideal separating line.
+        ideal_weights (np.ndarray): The weight vector of the ideal separating hyperplane.
+        ideal_bias (float): The bias of the ideal separating hyperplane.
         train_size (int): The number of training data points per trial.
         grid_size (float): The size of the grid.
         granularity (float): The step size between points on the grid.
@@ -398,11 +399,12 @@ def execute_linprog_experiments(exp_name, ideal_slope, ideal_intercept, train_si
         percent (int): The top/bottom percentage to analyze.
         same_class (bool): Whether to find the nearest neighbor from the same class.
         base_folder (str): The base directory to save the results.
+        num_dimensions (int): The number of dimensions for the data.
     '''
-    X_test, test_ids = exhaust_test_data(grid_size, granularity)
+    X_test, test_ids = exhaust_test_data(grid_size, granularity, num_dimensions)
     run_experiment(exp_name, num_trials, train_size, grid_size,
                    X_test, test_ids, percent, same_class,
-                   ideal_slope, ideal_intercept, base_folder, use_sigmoid=False)  # distance confidence
+                   ideal_weights, ideal_bias, base_folder, use_sigmoid=False)  # distance confidence
     run_experiment(exp_name, num_trials, train_size, grid_size,
                    X_test, test_ids, percent, same_class,
-                   ideal_slope, ideal_intercept, base_folder, use_sigmoid=True)  # sigmoid confidence
+                   ideal_weights, ideal_bias, base_folder, use_sigmoid=True)  # sigmoid confidence
