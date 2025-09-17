@@ -6,13 +6,13 @@ Created on August 9th 2025
 '''
 
 import os
-import math
 import numpy as np
 import pandas as pd
 import scipy.special as sp
 from scipy.spatial import cKDTree
 from linprog_classifier import LinearBinaryClassifier
 from experimenter import top_bottom_percent_conf_subsets
+from multiprocessing import Pool, cpu_count
 
 def rand_train_data(train_size, full_data, full_ids, ideal_weights, ideal_bias, random_seed=None):
     '''
@@ -46,6 +46,52 @@ def rand_train_data(train_size, full_data, full_ids, ideal_weights, ideal_bias, 
     y_train = np.where(np.dot(X_train, ideal_weights) + ideal_bias > 0, 1, -1)
 
     return X_train, y_train, train_ids
+
+def rand_test_data(test_size, grid_size, granularity, dimensions):
+    '''
+    Generates a uniform random sample of test data points without replacement
+    from a discrete grid in n-dimensions. If the requested test_size is greater
+    than or equal to the total number of points on the grid, it performs an
+    exhaustive test and returns all points.
+
+    Args:
+        test_size (int): The number of test data points to generate.
+        grid_size (float): The size of the grid.
+        granularity (float): The step size between points on the grid.
+        dimensions (int): The number of dimensions for the grid.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: A tuple containing:
+            - X_test (np.ndarray): The randomly generated test data points.
+            - test_point_ids (np.ndarray): Unique IDs corresponding to the test data.
+    '''
+    # The number of unique values on each dimension of the grid
+    num_points_per_dim = int(grid_size / granularity) + 1
+    
+    # Calculate the total number of points in the exhaustive grid
+    total_points = num_points_per_dim ** dimensions
+    
+    # If test_size is too large, use all points instead of sampling
+    if test_size >= total_points:
+        print(f"Warning: test_size ({test_size}) is greater than or equal to the total number of points on the grid ({total_points}). Performing an exhaustive test instead.")
+        sampled_indices = np.arange(total_points)
+    else:
+        # Use a memory-efficient method to generate unique random indices
+        sampled_indices = set()
+        while len(sampled_indices) < test_size:
+            sampled_indices.add(np.random.randint(0, total_points))
+        sampled_indices = np.array(list(sampled_indices))
+
+    # Calculate coordinates from the 1D indices without generating the full grid
+    X_test = np.zeros((len(sampled_indices), dimensions))
+    temp_indices = sampled_indices.copy()
+    for d in range(dimensions - 1, -1, -1):
+        coord_val = temp_indices % num_points_per_dim
+        X_test[:, d] = coord_val * granularity
+        temp_indices = temp_indices // num_points_per_dim
+    
+    test_point_ids = sampled_indices
+    return X_test, test_point_ids
 
 def exhaust_test_data(grid_size, granularity, dimensions):
     '''
@@ -117,7 +163,7 @@ def norm_train_dist(train_distances):
     norm_train_distances = train_distances / max_near
     return norm_train_distances
 
-def get_train_distances(X_train, y_train, X_test, ideal_slope, ideal_intercept, same_class):
+def get_train_distances(X_train, y_train, X_test, ideal_weights, ideal_bias, same_class):
     '''
     Calculates normalized distances from each test point to its nearest training point.
     
@@ -125,8 +171,8 @@ def get_train_distances(X_train, y_train, X_test, ideal_slope, ideal_intercept, 
         X_train (np.ndarray): The training data.
         y_train (np.ndarray): The labels for the training data.
         X_test (np.ndarray): The test data.
-        ideal_slope (float): The slope of the ideal separating line.
-        ideal_intercept (float): The intercept of the ideal separating line.
+        ideal_weights (np.ndarray): The weight vector of the ideal separating hyperplane.
+        ideal_bias (float): The bias of the ideal separating hyperplane.
         same_class (bool): If True, finds the nearest neighbor from the same class. If False,
                           finds the nearest neighbor from all classes.
 
@@ -134,11 +180,8 @@ def get_train_distances(X_train, y_train, X_test, ideal_slope, ideal_intercept, 
         train_distances (np.ndarray): Normalized distances to the nearest training point.
     '''
     # 1. Determine the ideal labels (ground truth) for the test set
-    if ideal_slope == float('inf'):  # vertical line
-        ideal_labels = np.where(X_test[:, 0] > ideal_intercept, 1, -1)
-    else:
-        ideal_labels = np.where(X_test[:, 1] > ideal_slope * X_test[:, 0] + ideal_intercept, 1, -1)
-    
+    ideal_labels = np.where(np.dot(X_test, ideal_weights) + ideal_bias > 0, 1, -1)
+
     # 2. Use KD-Trees for efficient nearest neighbor search
     train_distances = np.zeros(len(X_test))
     if same_class:
@@ -178,13 +221,31 @@ def get_sig_confidence(signed_bound_distances):
 
     return confidence_values
 
-def run_single_trial(trial, grid_size, model, X_train, y_train, train_ids, X_test, test_ids, percent, same_class, ideal_weights, ideal_bias, use_sigmoid):
+def run_single_trial(trial, grid_size, train_size, X_test, test_ids, percent, same_class, ideal_weights, ideal_bias, use_sigmoid, base_folder, exp_name):
     '''
     Runs a single trial of the linear programming experiment.
 
     Returns:
         dict: A dictionary containing the aggregated data for the single trial.
     '''
+    print(f"Running trial {trial+1}...")
+
+    if use_sigmoid:
+            # Load pre-trained models from the 'distance_conf' folder
+            model_file = os.path.join(base_folder, 'distance_conf', exp_name, 'experiment_models.npz')
+            model_data = np.load(model_file, allow_pickle=True)
+            X_train = model_data['X_train'][trial]
+            y_train = model_data['y_train'][trial]
+            train_ids = model_data['train_ids'][trial]
+            weights = model_data['weights'][trial]
+            bias = model_data['bias'][trial]
+            model = LinearBinaryClassifier(weights=weights, bias=bias)
+    else:
+        # Train a new model for each trial
+        X_train, y_train, train_ids = rand_train_data(train_size, X_test, test_ids, ideal_weights, ideal_bias, random_seed=trial+1)
+        model = LinearBinaryClassifier()
+        model.train(X_train, y_train)
+
     # Make predictions and get decision distances
     decision_distances = model.get_decision_distance(X_test)
 
@@ -209,7 +270,7 @@ def run_single_trial(trial, grid_size, model, X_train, y_train, train_ids, X_tes
     bottom_conf, top_conf, bottom_train_dist, top_train_dist, bottom_ids, top_ids, bottom_is_member, top_is_member = top_bottom_percent_conf_subsets(confidences, train_distances, test_ids, is_member, percent)
 
     # Return a dictionary with all the collected data
-    return {
+    trial_result = {
         "bottom_conf": bottom_conf,
         "top_conf": top_conf,
         "bottom_train_dist": bottom_train_dist,
@@ -218,12 +279,18 @@ def run_single_trial(trial, grid_size, model, X_train, y_train, train_ids, X_tes
         "top_ids": top_ids,
         "bottom_is_member": bottom_is_member,
         "top_is_member": top_is_member,
-        "trial_num": np.full(bottom_conf.shape, trial)
+        "trial_num": np.full(bottom_conf.shape, trial+1)
     }
+
+    # Return the result and the model parameters if needed
+    if not use_sigmoid:
+        return trial_result, X_train, y_train, train_ids, model.weights, model.bias
+    else:
+        return trial_result    
 
 def run_experiment(exp_name, num_trials, train_size, grid_size,
                    X_test, test_ids, percent, same_class,
-                   ideal_weights, ideal_bias, base_folder, use_sigmoid=False):
+                   ideal_weights, ideal_bias, base_folder, use_sigmoid=False, use_multiprocessing=True):
     '''
     Conducts a series of machine learning experiments to analyze model confidence and
     nearest training point distances for top and bottom confidence predictions.
@@ -262,6 +329,7 @@ def run_experiment(exp_name, num_trials, train_size, grid_size,
         base_folder (str): The base directory to save the results.
         use_sigmoid (bool): If True, use sigmoid confidence and load models.
                             If False, use normalized distance and train new models.
+        use_multiprocessing (bool): If True, use multiprocessing to run trials in parallel.
     '''
     # Set the sub-folder and confidence metric based on the use_sigmoid flag
     if use_sigmoid:
@@ -291,58 +359,48 @@ def run_experiment(exp_name, num_trials, train_size, grid_size,
         all_weights = []
         all_bias = []
 
-    for trial in range(num_trials):
-        print(f"Running trial {trial + 1}/{num_trials}...")
+    # Prepare arguments for multiprocessing or sequential execution
+    shared_args = (grid_size, train_size, X_test, test_ids, percent, same_class, ideal_weights, ideal_bias, use_sigmoid, base_folder, exp_name)
+    trial_numbers = range(0, num_trials)
+    
+    if use_multiprocessing:
+        print(f"Running {num_trials} trials in parallel...")
 
-        if use_sigmoid:
-            # Load pre-trained models from the 'distance_conf' folder
-            model_file = os.path.join(base_folder, 'distance_conf', exp_name, 'experiment_models.npz')
-            model_data = np.load(model_file, allow_pickle=True)
-            X_train = model_data['X_train'][trial]
-            y_train = model_data['y_train'][trial]
-            train_ids = model_data['train_ids'][trial]
-            weights = model_data['weights'][trial]
-            bias = model_data['bias'][trial]
-            model = LinearBinaryClassifier(weights=weights, bias=bias)
-        else:
-            # Train a new model for each trial
-            X_train, y_train, train_ids = rand_train_data(train_size, X_test, test_ids, ideal_weights, ideal_bias, random_seed=trial + 1)
-            model = LinearBinaryClassifier()
-            model.train(X_train, y_train)
+        # Get number of cpus from environment or default to a safe value if not a SLURM environment
+        try:
+            num_cpus = int(os.environ['SLURM_CPUS_PER_TASK'])
+        except KeyError:
+            num_cpus = cpu_count()
 
-            # Save trial model parameters for future sigmoid runs
+        with Pool(processes=num_cpus) as pool:
+            # Create an iterator for the arguments to pass to the parallel function
+            args_iterator = ((trial,) + shared_args for trial in trial_numbers)
+            results = pool.starmap(run_single_trial, args_iterator)
+    else:
+        print(f"Running {num_trials} trials sequentially...")
+        results = [run_single_trial(trial, *shared_args) for trial in trial_numbers]
+
+    # Aggregate the results from all trials
+    for result in results:
+        if not use_sigmoid:
+            trial_result, X_train, y_train, train_ids, weights, bias = result
             all_X_train.append(X_train)
             all_y_train.append(y_train)
             all_train_ids.append(train_ids)
-            all_weights.append(model.weights)
-            all_bias.append(model.bias)
+            all_weights.append(weights)
+            all_bias.append(bias)
+        else:
+            trial_result = result
 
-        # Run the single trial with the appropriate confidence flag
-        result = run_single_trial(
-            trial=trial + 1,
-            grid_size=grid_size,
-            model=model,
-            X_train=X_train,
-            y_train=y_train,
-            train_ids=train_ids,
-            X_test=X_test,
-            test_ids=test_ids,
-            percent=percent,
-            same_class=same_class,
-            ideal_weights=ideal_weights,
-            ideal_bias=ideal_bias,
-            use_sigmoid=use_sigmoid
-        )
-
-        all_trials_bottom_conf.extend(result["bottom_conf"])
-        all_trials_top_conf.extend(result["top_conf"])
-        all_trials_bottom_train_dist.extend(result["bottom_train_dist"])
-        all_trials_top_train_dist.extend(result["top_train_dist"])
-        all_trials_bottom_ids.extend(result["bottom_ids"])
-        all_trials_top_ids.extend(result["top_ids"])
-        all_trials_bottom_is_member.extend(result["bottom_is_member"])
-        all_trials_top_is_member.extend(result["top_is_member"])
-        all_trials_num.extend(result["trial_num"])
+        all_trials_bottom_conf.extend(trial_result["bottom_conf"])
+        all_trials_top_conf.extend(trial_result["top_conf"])
+        all_trials_bottom_train_dist.extend(trial_result["bottom_train_dist"])
+        all_trials_top_train_dist.extend(trial_result["top_train_dist"])
+        all_trials_bottom_ids.extend(trial_result["bottom_ids"])
+        all_trials_top_ids.extend(trial_result["top_ids"])
+        all_trials_bottom_is_member.extend(trial_result["bottom_is_member"])
+        all_trials_top_is_member.extend(trial_result["top_is_member"])
+        all_trials_num.extend(trial_result["trial_num"])
 
     # If we trained new models, save their parameters
     if not use_sigmoid:
@@ -382,7 +440,7 @@ def run_experiment(exp_name, num_trials, train_size, grid_size,
 
     print(f"Results saved to '{exp_dir}'.")
 
-def execute_linprog_experiments(exp_name, ideal_weights, ideal_bias, train_size, grid_size, granularity, num_trials, percent, same_class, base_folder, num_dimensions):
+def execute_linprog_experiments(exp_name, ideal_weights, ideal_bias, train_size, test_size, grid_size, granularity, num_trials, percent, same_class, base_folder, num_dimensions, use_multiprocessing):
     '''
     Executes a pair of linear programming experiments on the same
     trained models using distance from the decision boundary first 
@@ -393,6 +451,7 @@ def execute_linprog_experiments(exp_name, ideal_weights, ideal_bias, train_size,
         ideal_weights (np.ndarray): The weight vector of the ideal separating hyperplane.
         ideal_bias (float): The bias of the ideal separating hyperplane.
         train_size (int): The number of training data points per trial.
+        test_size (int): The number of test data points to generate.
         grid_size (float): The size of the grid.
         granularity (float): The step size between points on the grid.
         num_trials (int): The number of trials to run.
@@ -400,11 +459,12 @@ def execute_linprog_experiments(exp_name, ideal_weights, ideal_bias, train_size,
         same_class (bool): Whether to find the nearest neighbor from the same class.
         base_folder (str): The base directory to save the results.
         num_dimensions (int): The number of dimensions for the data.
+        use_multiprocessing (bool): Whether to use multiprocessing to run trials in parallel.
     '''
-    X_test, test_ids = exhaust_test_data(grid_size, granularity, num_dimensions)
+    X_test, test_ids = rand_test_data(test_size, grid_size, granularity, num_dimensions)
     run_experiment(exp_name, num_trials, train_size, grid_size,
                    X_test, test_ids, percent, same_class,
-                   ideal_weights, ideal_bias, base_folder, use_sigmoid=False)  # distance confidence
+                   ideal_weights, ideal_bias, base_folder, use_sigmoid=False, use_multiprocessing=use_multiprocessing)  # distance confidence
     run_experiment(exp_name, num_trials, train_size, grid_size,
                    X_test, test_ids, percent, same_class,
-                   ideal_weights, ideal_bias, base_folder, use_sigmoid=True)  # sigmoid confidence
+                   ideal_weights, ideal_bias, base_folder, use_sigmoid=True, use_multiprocessing=use_multiprocessing)  # sigmoid confidence
