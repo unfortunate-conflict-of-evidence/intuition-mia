@@ -18,19 +18,19 @@ class CAE_Encoder(Module):
             nn.Conv2D(in_channels, 32, k=3, strides=1, padding='SAME'),
             nn.BatchNorm2D(32),
             F.relu,
-            nn.MaxPool2D(k=2, strides=2) # 32x32 -> 16x16
+            lambda x, *args, **kwargs: F.max_pool_2d(x, size=2, strides=2) # 32x32 -> 16x16
         ])
         self.conv2 = nn.Sequential([
             nn.Conv2D(32, 64, k=3, strides=1, padding='SAME'),
             nn.BatchNorm2D(64),
             F.relu,
-            nn.MaxPool2D(k=2, strides=2) # 16x16 -> 8x8
+            lambda x, *args, **kwargs: F.max_pool_2d(x, size=2, strides=2) # 16x16 -> 8x8
         ])
         self.conv3 = nn.Sequential([
             nn.Conv2D(64, 128, k=3, strides=1, padding='SAME'),
             nn.BatchNorm2D(128),
             F.relu,
-            nn.MaxPool2D(k=2, strides=2) # 8x8 -> 4x4
+            lambda x, *args, **kwargs: F.max_pool_2d(x, size=2, strides=2) # 8x8 -> 4x4
         ])
         # Latent layer: 4*4*128 = 2048 features flattened to latent_dim
         self.fc_mu = nn.Linear(4 * 4 * 128, latent_dim)
@@ -39,11 +39,15 @@ class CAE_Encoder(Module):
         h = self.conv1(x, training=training)
         h = self.conv2(h, training=training)
         h = self.conv3(h, training=training)
+
+        # h.shape is (N, C, H, W). We need (C, H, W) for the decoder.
+        # Slicing from index 1 gives (C, H, W).
+        pre_flatten_shape = h.shape[1:]
         
         # Flatten and produce latent vector (feature)
         h = h.reshape((h.shape[0], -1))
         latent_features = self.fc_mu(h)
-        return latent_features, h.shape # Return latent vector and the shape before flattening
+        return latent_features, pre_flatten_shape # Return latent vector and the shape before flattening
 
 class CAE_Decoder(Module):
     """Decodes a latent vector back into an image."""
@@ -52,26 +56,30 @@ class CAE_Decoder(Module):
         self.fc_decode = nn.Linear(latent_dim, 4 * 4 * 128)
         
         self.deconv1 = nn.Sequential([
-            nn.Conv2DTranspose(128, 64, k=3, strides=2, padding='SAME'), # 4x4 -> 8x8
+            nn.ConvTranspose2D(128, 64, k=3, strides=2, padding='SAME'), # 4x4 -> 8x8
             nn.BatchNorm2D(64),
             F.relu
         ])
         self.deconv2 = nn.Sequential([
-            nn.Conv2DTranspose(64, 32, k=3, strides=2, padding='SAME'), # 8x8 -> 16x16
+            nn.ConvTranspose2D(64, 32, k=3, strides=2, padding='SAME'), # 8x8 -> 16x16
             nn.BatchNorm2D(32),
             F.relu
         ])
         # Final layer uses Tanh to output reconstructed pixel values
         # We cannot use Sigmoid because the inputs were normalized to [-1, 1]
         self.deconv3 = nn.Sequential([
-            nn.Conv2DTranspose(32, out_channels, k=3, strides=2, padding='SAME'), # 16x16 -> 32x32
+            nn.ConvTranspose2D(32, out_channels, k=3, strides=2, padding='SAME'), # 16x16 -> 32x32
             F.tanh
         ])
 
     def __call__(self, z, pre_flatten_shape, training: bool):
         h = self.fc_decode(z)
-        # Reshape to 4x4x128 volume before transposed convolutions
-        h = h.reshape((h.shape[0], pre_flatten_shape[1], pre_flatten_shape[2], pre_flatten_shape[3]))
+
+        # pre_flatten_shape is now (C, H, W). We add the batch dimension (h.shape[0]) back.
+        # The new shape is (N, C, H, W)
+        new_shape = (h.shape[0], pre_flatten_shape[0], pre_flatten_shape[1], pre_flatten_shape[2])
+
+        h = h.reshape(new_shape)
         
         h = self.deconv1(h, training=training)
         h = self.deconv2(h, training=training)
