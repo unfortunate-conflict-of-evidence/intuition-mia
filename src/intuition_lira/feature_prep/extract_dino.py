@@ -25,8 +25,8 @@ def run_dino_extraction(dataset_name: str,
 
     # 2. Load and Normalize Data
     print(f"Loading and normalizing {dataset_name} data...")
-    # x_all contains both 'train' and 'test' splits, normalized to [0, 1]
-    x_all = data_utils.load_and_normalize_data(dataset_name, ['train', 'test'])
+    # x_all contains 'train' alone and/or 'test' splits, normalized to [0, 1]
+    x_all = data_utils.load_and_normalize_data(dataset_name, 'train')
     print(f"Data loaded successfully. Total shape: {x_all.shape}")
 
     # 3. Load DINOv2 Model (PyTorch)
