@@ -98,9 +98,11 @@ def train_and_extract(dataset_name: str,
             batch_indices = indices[start:end]
             batch = x_all[batch_indices]
 
-            # Apply the required NHWC->NCHW transpose for image data before training
             if is_image:
-                batch_input = np.transpose(batch, (0, 3, 1, 2))
+                # Apply [-1, 1] scaling for AE before training
+                batch_scaled = (batch * 2.0) - 1.0
+                # Apply the required NHWC->NCHW transpose for image data before training
+                batch_input = np.transpose(batch_scaled, (0, 3, 1, 2))
             else:
                 batch_input = batch
                 
@@ -135,8 +137,10 @@ def train_and_extract(dataset_name: str,
         batch = x_all[i:i + batch_size]
 
         if is_image:
+            # Apply [-1, 1] scaling for AE before feature extraction
+            batch_scaled = (batch * 2.0) - 1.0
             # Convert NHWC (loaded) -> NCHW (required by CAE model)
-            batch_input = np.transpose(batch, (0, 3, 1, 2)) 
+            batch_input = np.transpose(batch_scaled, (0, 3, 1, 2)) 
         else:
             # Tabular data is already (N, D)
             batch_input = batch
