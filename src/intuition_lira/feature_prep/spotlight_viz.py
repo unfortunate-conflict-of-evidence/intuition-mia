@@ -14,9 +14,9 @@ from renumics import spotlight
 def prepare_for_spotlight(dataset_name: str, logdir: str):
     
     # 1. Load Data
-    print("Loading data for visualization (Train + Test splits)...")
+    print("Loading data for visualization...")
     
-    splits = ['train', 'test']
+    splits = ['train']
     images_list = []
     labels_list = []
     
@@ -33,7 +33,7 @@ def prepare_for_spotlight(dataset_name: str, logdir: str):
     
     # Load metadata
     scores = np.load(os.path.join(logdir, f'{dataset_name}_density_scores.npy'))
-    features = np.load(os.path.join(logdir, f'{dataset_name}_features.npy'))
+    features = np.load(os.path.join(logdir, f'{dataset_name}_dino_features.npy'))
 
     print(f"TFDS Images loaded: {len(images_list)}")
     print(f"NumPy Scores loaded: {len(scores)}")
