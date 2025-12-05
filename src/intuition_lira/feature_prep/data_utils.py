@@ -35,10 +35,10 @@ def load_and_normalize_data(dataset_name: str, split: str = 'train'):
             
         inputs = np.array(all_images)
         
-        # Apply the consistent image normalization: [0, 255] -> [-1, 1]
+        # Apply the consistent image normalization: [0, 255] -> [0, 1]
         # Images are uint8, so convert to float first
         inputs = inputs.astype(np.float32)
-        inputs = (inputs / 127.5) - 1.0 # NHWC format (N, 32, 32, 3)
+        inputs = inputs / 255.0 # Scale to [0, 1]
         
     elif dataset_name == 'celeba':
         all_images = []
@@ -57,9 +57,9 @@ def load_and_normalize_data(dataset_name: str, split: str = 'train'):
         # them to 32x32 to match your ConvolutionalAutoencoder architecture.
         # Example: inputs = resize_and_crop(inputs, target_size=(32, 32))
         
-        # Apply the consistent image normalization: [0, 255] -> [-1, 1]
+        # Apply the consistent image normalization: [0, 255] -> [0, 1]
         inputs = inputs.astype(np.float32)
-        inputs = (inputs / 127.5) - 1.0
+        inputs = inputs / 255.0 # Scale to [0, 1] 
         
     elif dataset_name == 'purchase-100':
         # This is a tabular dataset, typically loaded from an NPZ file
