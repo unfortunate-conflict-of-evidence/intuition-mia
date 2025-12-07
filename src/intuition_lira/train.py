@@ -76,7 +76,11 @@ class TrainLoop(objax.Module):
         checkpoint = objax.io.Checkpoint(logdir, keep_ckpts=20, makedir=True)
         start_epoch, last_ckpt = checkpoint.restore(self.vars())
         train_iter = iter(train)
-        progress = np.zeros(jax.local_device_count(), 'f')  # for multi-GPU
+
+        # FIX 1: Force progress to be a a simple scalar float.
+        # This bypasses the multi-GPU logic that fails even with JIT disabled.
+        # OLD: progress = np.zeros(jax.local_device_count(), 'f')  # for multi-GPU
+        progress = 0.0 # Start with a scalar float
 
         best_acc = 0
         best_acc_epoch = -1
@@ -87,7 +91,9 @@ class TrainLoop(objax.Module):
                 summary = Summary()
                 loop = range(0, train_size, self.params.batch)
                 for step in loop:
-                    progress[:] = (step + (epoch * train_size)) / (num_train_epochs * train_size)
+                    # FIX 2: Use scalar assignment (=) instead of array assignment ([:])
+                    # OLD: progress[:] = (step + (epoch * train_size)) / (num_train_epochs * train_size)
+                    progress = (step + (epoch * train_size)) / (num_train_epochs * train_size)
                     self.train_step(summary, next(train_iter), progress)
 
                 # Eval
@@ -146,7 +152,11 @@ class MemModule(TrainLoop):
             lr = lr * jn.clip(progress*100,0,1)
             self.opt(lr, g)
             self.model_ema.update_ema()
-            return {'monitors/lr': lr, **v[1]}
+
+            # FIX: Ensure all auxiliary metrics are scalars before being returned for logging
+            reduced_metrics = {k: v.mean() for k, v in v[1].items()}
+            # return {'monitors/lr': lr, **v[1]}
+            return {'monitors/lr': lr, **reduced_metrics} # This is the safe return
 
         self.predict = objax.Jit(objax.nn.Sequential([objax.ForceArgs(self.model_ema, training=False)]))
 
@@ -211,15 +221,23 @@ def get_data(seed):
 
     nclass = np.max(labels)+1
 
-    np.random.seed(seed)
-    if FLAGS.num_experiments is not None:
-        np.random.seed(0)
-        keep = np.random.uniform(0,1,size=(FLAGS.num_experiments, FLAGS.dataset_size))
-        order = keep.argsort(0)
-        keep = order < int(FLAGS.pkeep * FLAGS.num_experiments)
-        keep = np.array(keep[FLAGS.expid], dtype=bool)
+    # --- Modification for Causal Subsets ---
+    if FLAGS.causal_keep_path:
+        print(f"Loading subset mask from: {FLAGS.causal_keep_path}")
+        # Strip quotes (both single and double) that the shell may have added
+        clean_path = FLAGS.causal_keep_path.strip('\"\'')
+        keep = np.load(clean_path)
     else:
-        keep = np.random.uniform(0, 1, size=FLAGS.dataset_size) <= FLAGS.pkeep
+        # --- Original Subsetting Logic --
+        np.random.seed(seed)
+        if FLAGS.num_experiments is not None:
+            np.random.seed(0)
+            keep = np.random.uniform(0,1,size=(FLAGS.num_experiments, FLAGS.dataset_size))
+            order = keep.argsort(0)
+            keep = order < int(FLAGS.pkeep * FLAGS.num_experiments)
+            keep = np.array(keep[FLAGS.expid], dtype=bool)
+        else:
+            keep = np.random.uniform(0, 1, size=FLAGS.dataset_size) <= FLAGS.pkeep
 
     if FLAGS.only_subset is not None:
         keep[FLAGS.only_subset:] = 0
@@ -249,6 +267,18 @@ def main(argv):
     del argv
     tf.config.experimental.set_visible_devices([], "GPU")
 
+    # CRITICAL JAX FIX: Force JAX to only use one device (local device count = 1)
+    # This must be done BEFORE any JAX/Objax JIT compilation or environment setup.
+    try:
+        # Set only one device to be visible
+        os.environ['CUDA_VISIBLE_DEVICES'] = '0' 
+        # Tell JAX that the local device count is 1
+        # jax.config.update('jax_local_device_count', 1) 
+        # print("JAX: Forcing local device count to 1 for stable scalar logging.")
+    except Exception as e:
+        print(f"Warning: Could not set JAX device configuration: {e}")
+        pass
+
     seed = FLAGS.seed
     if seed is None:
         import time
@@ -261,15 +291,26 @@ def main(argv):
                     weight_decay=FLAGS.weight_decay,
                     augment=FLAGS.augment,
                     seed=seed)
-
-
-    if FLAGS.tunename:
+    
+    # --- BEGIN: Modification for Causal Subsets ---
+    if FLAGS.custom_log_name:
+        logdir = os.path.join(FLAGS.logdir, FLAGS.custom_log_name)
+    elif FLAGS.tunename:
         logdir = '_'.join(sorted('%s=%s' % k for k in args.items()))
     elif FLAGS.expid is not None:
         logdir = "experiment-%d_%d"%(FLAGS.expid,FLAGS.num_experiments)
     else:
         logdir = "experiment-"+str(seed)
-    logdir = os.path.join(FLAGS.logdir, logdir)
+        
+    # No need to join again, as it's already done above if custom_log_name is used.
+    # We must assume FLAGS.logdir is the BASE directory (e.g., 'experiments/causal_test')
+    if not FLAGS.custom_log_name:
+        logdir = os.path.join(FLAGS.logdir, logdir)
+
+    if os.path.exists(os.path.join(logdir, "ckpt", "%010d.npz"%FLAGS.epochs)):
+        print(f"run {FLAGS.expid} already completed.")
+        return
+    # --- END: Modification for Causal Subsets ---
 
     if os.path.exists(os.path.join(logdir, "ckpt", "%010d.npz"%FLAGS.epochs)):
         print(f"run {FLAGS.expid} already completed.")
@@ -328,5 +369,8 @@ if __name__ == '__main__':
     flags.DEFINE_integer('save_steps', 10, 'how often to get save model.')
     flags.DEFINE_integer('patience', None, 'Early stopping after this many epochs without progress')
     flags.DEFINE_bool('tunename', False, 'Use tune name?')
+    # --- Added Flags for Causal Subsets ---
+    flags.DEFINE_string('causal_keep_path', None, 'Path to a specific keep.npy file containing the subset mask for the causal test.')
+    flags.DEFINE_string('custom_log_name', None, 'Custom name for the log directory to bypass default naming.')
     app.run(main)
 
