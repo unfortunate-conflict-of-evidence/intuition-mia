@@ -71,7 +71,7 @@ def generate_causal_subsets(target_id: int, N_total: int, N_keep: int, K: int, o
 TARGET_ID = 36290
 N_TOTAL = 50000
 N_KEEP = 25000
-K_MODELS = 20
+K_MODELS = 100
 OUTPUT_DIR = 'feature_prep/causal_subsets/cifar10'
 
 generate_causal_subsets(TARGET_ID, N_TOTAL, N_KEEP, K_MODELS, OUTPUT_DIR)

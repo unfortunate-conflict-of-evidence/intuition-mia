@@ -59,6 +59,19 @@ def main(argv):
     xs_all = np.load(os.path.join(FLAGS.logdir,"x_train.npy"))[:FLAGS.dataset_size]
     ys_all = np.load(os.path.join(FLAGS.logdir,"y_train.npy"))[:FLAGS.dataset_size]
 
+    # START FILTERING LOGIC:
+    if FLAGS.only_subset is not None:
+        target_id = FLAGS.only_subset
+        
+        # Select the single example (x and y) using the ID
+        xs_all = xs_all[target_id:target_id+1]
+        ys_all = ys_all[target_id:target_id+1]
+        
+        # Update dataset_size to reflect the single point
+        FLAGS.dataset_size = 1 
+        
+        print(f"Inference restricted to single subset index: {target_id}")
+    # END FILTERING LOGIC
 
     def get_loss(model, xbatch, ybatch, shift, reflect=True, stride=1):
 
@@ -134,5 +147,6 @@ if __name__ == '__main__':
     flags.DEFINE_string('regex', '.*experiment.*', 'keep files when matching')
     flags.DEFINE_integer('dataset_size', 50000, 'size of dataset.')
     flags.DEFINE_integer('from_epoch', None, 'which epoch to load from.')
+    flags.DEFINE_integer('only_subset', None, 'Only perform inference on a single example ID.')
     app.run(main)
 

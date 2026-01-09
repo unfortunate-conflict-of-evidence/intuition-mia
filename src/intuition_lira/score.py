@@ -61,6 +61,21 @@ def load_stats():
         p.map(load_one, [x for x in os.listdir(logdir) if 'exp' in x])
 
 
+# logdir = sys.argv[1]
+# labels = np.load(os.path.join(logdir,"y_train.npy"))
+# load_stats()
+
 logdir = sys.argv[1]
-labels = np.load(os.path.join(logdir,"y_train.npy"))
+target_id = int(sys.argv[2]) # Get the target ID from the command line
+
+# Load all 50,000 labels
+all_labels = np.load(os.path.join(logdir,"y_train.npy"))
+
+# We only care about the single label for the target point
+target_label = all_labels[target_id]
+
+# The 'labels' array used inside load_one should only contain the target label (repeated if needed, but only the index 0 will be used)
+# Since we only process one example, we just need the single correct label.
+labels = np.array([target_label]) 
+
 load_stats()
